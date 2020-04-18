@@ -4,10 +4,8 @@ import adrianromanski.util.ColumnField;
 import adrianromanski.util.Metamodel;
 
 import java.lang.reflect.Field;
-import java.sql.Connection;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.SQLException;
+import java.lang.reflect.InvocationTargetException;
+import java.sql.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class EntityManagerImpl<T> implements EntityManager<T> {
@@ -23,6 +21,50 @@ public class EntityManagerImpl<T> implements EntityManager<T> {
         PreparedStatement statement = prepareStatementWith(sql).andParameters(t);
         statement.executeUpdate();
     }
+
+    @Override
+    public T find(Class<T> clss, Object primaryKey) throws SQLException, InvocationTargetException, NoSuchMethodException, InstantiationException, IllegalAccessException {
+        Metamodel metamodel = Metamodel.of(clss);
+        String sql = metamodel.buildSelectRequest();
+        PreparedStatement statement = prepareStatementWith(sql).andPrimaryKey(primaryKey);
+        ResultSet resultSet = statement.executeQuery();
+        return buildInstanceForm(clss, resultSet);
+    }
+
+
+
+    private T buildInstanceForm(Class<T> clss, ResultSet resultSet) throws NoSuchMethodException, IllegalAccessException, InvocationTargetException, InstantiationException, SQLException {
+
+        Metamodel metamodel = Metamodel.of(clss);
+
+        T t = clss.getConstructor().newInstance();
+        Field primaryKeyField = metamodel.getPrimaryKey().getField();
+        String primaryKeyColumnName = metamodel.getPrimaryKey().getName();
+        Class<?> primaryKeyType = primaryKeyField.getType();
+
+        resultSet.next();
+        if(primaryKeyType == long.class) {
+            int primaryKey = resultSet.getInt(primaryKeyColumnName);
+            primaryKeyField.setAccessible(true);
+            primaryKeyField.set(t, primaryKey);
+        }
+
+        for(ColumnField columnField : metamodel.getColumns()) {
+            Field field = columnField.getField();
+            field.setAccessible(true);
+            Class<?> columnType = columnField.getType();
+            String columnName = columnField.getName();
+            if(columnType == int.class) {
+                int value = resultSet.getInt(columnName);
+                field.set(t, value);
+            } else if(columnType == String.class) {
+                String value = resultSet.getString(columnName);
+                field.set(t, value);
+            }
+        }
+        return t;
+    }
+
 
     private PreparedStatementWrapper prepareStatementWith(String sql) throws SQLException {
         Connection connection =
@@ -65,5 +107,13 @@ public class EntityManagerImpl<T> implements EntityManager<T> {
             }
             return statement;
         }
+
+        public PreparedStatement andPrimaryKey(Object primaryKey) throws SQLException {
+            if(primaryKey.getClass() == Long.class) {
+                statement.setLong(1, (Long) primaryKey);
+            }
+            return statement;
+        }
     }
+
 }
